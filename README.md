@@ -12,8 +12,11 @@ as well if you like.
 * How to compile:
 
 1.open the directory of the file
+
 2.cmake .
+
 3.make
+
 4.That's all.You would be able to see a file names "search",that's it.
 
 ## Usage
