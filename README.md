@@ -10,6 +10,7 @@
 as well if you like.
 
 * How to compile:
+
 1.open the directory of the file
 2.cmake .
 3.make
