@@ -9,7 +9,7 @@
 (as you can see,there's CMakeLists.),but you can use g++
 as well if you like. Just notice: if you choose g++, you
 will have to link libmagic.so and libhiredis.so by yourself
-(you can try -Imagic and -Ihiredis, that may work.).
+(you can try -lmagic and -lhiredis, that may work.).
 
 * How to compile:
 
