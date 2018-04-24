@@ -1,0 +1,16 @@
+
+Usage : ./search <FileDirection> <keyword1>.....<keywordn>
+
+  This edition stores the results in redis SET, which means
+you are required to install and config redis.
+
+  Before launching, you need to open the redis server(command:
+redis-server), the IP address should be 127.0.0.1 and the port
+used is 6379 by default. If you have changed the IP address or
+port-using, you may fail to connect to the server.
+
+  Before searching, you would be asked to input the SETNAME of
+the set used, and you can get the results in redis client(command:
+redis-cli) by command SMEMBERS <setname_you_have_entered> when
+the search is done. You are recommended to delete the SET if you
+don't need it as it may pollute your searchinig environment.

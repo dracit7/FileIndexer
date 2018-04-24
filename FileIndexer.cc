@@ -1,17 +1,27 @@
+// The BETA version.
+// Only support basic requirements
+// Print results on konsole.
+
+
+
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
 #include <vector>
+#include <cstdlib>
 // C++ Header Files.
 // Use iostream,fstream and sstream to find keywords and generate information.
 // Algorithm and vector are used to simplify the coding process.
 
 #include <dirent.h>
 #include <string.h>
+#include <magic.h>
+#include <hiredis/hiredis.h>
 // C Header Files.
 // Used to traverse all files in the given directory.
 
+using std::cin;
 using std::cout;
 using std::count;
 using std::sort;
@@ -20,7 +30,82 @@ using std::vector;
 using std::string;
 using std::ifstream;
 using std::ostringstream;
+using std::to_string;
 // Some objects which will be used.
+
+
+namespace {
+
+string setname="FileIndexer_result";
+
+// This class is used to sort keywords by the number
+// of their occurences in a file.
+// Use it as a parameter of function sort.
+class compare {
+public:
+  compare(vector<int> *a,int b) {
+    lineserials=new vector<int>[b];
+    for(int i=0;i<b;i++)
+      lineserials[i]=a[i];
+  }
+  bool operator() (int a,int b) {
+    return lineserials[a].size()>lineserials[b].size();
+  }
+private:
+  vector<int> *lineserials;
+};
+
+// Use redis to store results.
+void StoreInfo(string info) {
+  redisContext *connect = redisConnect("127.0.0.1", 6379);
+  if (connect != NULL && connect->err) {
+      printf("connection error: %s\n", connect->errstr);
+      return;
+  }
+  redisReply *reply;
+  reply = static_cast<redisReply*>(redisCommand(
+    connect,
+    "SADD %s %s",setname.c_str(),info.c_str())
+  );
+  freeReplyObject(reply);
+  redisFree(connect);
+  cout<<"Results saved!"<<endl;
+}
+
+
+
+void Save(string filename,vector<int> *lineserials,string *keywords,int argc) {
+  string info=filename+" : ";
+  // Use index sort to sort keywords.
+  int index[argc-2];
+  for(int i=0;i<argc-2;i++)
+    index[i]=i;
+  sort(index,index+argc-2,compare(lineserials,argc-2));
+  // Generate the output information.
+  for(int i=0;i<argc-2;i++) {
+    if (lineserials[index[i]].size()==0) return;
+    info=info+keywords[index[i]]+"("+to_string(lineserials[index[i]].size())+"): line ";
+    vector<int>::iterator ite = lineserials[index[i]].begin();
+    while (!lineserials[index[i]].empty()){
+      info=info+to_string(lineserials[index[i]][0])+" ";
+      lineserials[index[i]].erase(ite);
+      ite = lineserials[index[i]].begin();
+    }
+    info=info+"  ";
+  }
+  StoreInfo(info);
+}
+
+// Use magic lib to check the MIME type of a file.
+bool CheckType(string filename) {
+  magic_t checker;
+  checker=magic_open(MAGIC_MIME_TYPE);
+  magic_load(checker,NULL);
+  bool flag=!strcmp(magic_file(checker,filename.c_str()),"text/plain");
+  magic_close(checker);
+  return flag;
+}
+
 
 
 // This recursive function returns a vector
@@ -42,8 +127,10 @@ vector<string> GetFiles(string root) {
         // Joint the root directory and file name together,
         // that's the entire name of a file.
         name=root+name+string(file->d_name);
-        // Add this filename to the vector.
-        filenames.push_back(name);
+        // If this file is a plain text then
+        // add this filename to the vector.
+        if(CheckType(name))
+          filenames.push_back(name);
       }
       else if(file->d_type==4){
         // If this file is a directory:
@@ -97,36 +184,11 @@ vector<int> FindKeywords(string content,string keyword) {
   return lineserial;
 }
 
-// This method prints the information.
-void Print(string keyword,vector<int> lineserial) {
-  if (lineserial.size()==0) return;
-  cout<<keyword<<"("<<lineserial.size()<<")"<<": line ";
-  vector<int>::iterator ite = lineserial.begin();
-  while (!lineserial.empty()){
-    cout<<lineserial[0]<<" ";
-    lineserial.erase(ite);
-    ite = lineserial.begin();
-  }
-  cout<<"  ";
-}
 
-// This class is used to sort keywords by the number
-// of their occurences in a file.
-// Use it as a parameter of function sort.
-class compare {
-public:
-  compare(vector<int> *a,int b) {
-    lineserials=new vector<int>[b];
-    for(int i=0;i<b;i++)
-      lineserials[i]=a[i];
-  }
-  bool operator() (int a,int b) {
-    return lineserials[a].size()>lineserials[b].size();
-  }
-private:
-  vector<int> *lineserials;
-};
 
+
+
+}  //namespace
 
 int main(int argc , char* argv[])
 {
@@ -136,13 +198,15 @@ int main(int argc , char* argv[])
   }
   // help info
   if(strcmp(argv[1],"--help")==0) {
-    cout<<endl;
+    system("cat helper");
     return 0;
   }
   if(argc<=2) {
     cout<<"Error: invalid input. Use --help to get usage."<<endl;
     return -1;
   }
+  cout<<"Please enter the SET name of the output in redis:";
+  cin>>setname;
   // Get filenames and keywords from input.
   vector<string> filenames=GetFiles(argv[1]);
   string keywords[argc-2];
@@ -171,17 +235,8 @@ int main(int argc , char* argv[])
         if(!lineserials[i].empty())
           ifexist=true;
       }
-      if(ifexist){
-        cout<<filename<<" : ";
-        // Use index sort to sort keywords.
-        int index[argc-2];
-        for(int i=0;i<argc-2;i++)
-          index[i]=i;
-        sort(index,index+argc-2,compare(lineserials,argc-2));
-        for(int i=0;i<argc-2;i++)
-            Print(keywords[index[i]],lineserials[index[i]]);
-        cout<<endl;
-      }
+      if(ifexist)
+        Save(filename,lineserials,keywords,argc);
     }
     else {
         cout<<"Cannot open this file."<<endl;
