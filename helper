@@ -14,3 +14,4 @@ the set used, and you can get the results in redis client(command:
 redis-cli) by command SMEMBERS <setname_you_have_entered> when
 the search is done. You are recommended to delete the SET if you
 don't need it as it may pollute your searchinig environment.
+

@@ -83,7 +83,7 @@ void Save(string filename,vector<int> *lineserials,string *keywords,int argc) {
   sort(index,index+argc-2,compare(lineserials,argc-2));
   // Generate the output information.
   for(int i=0;i<argc-2;i++) {
-    if (lineserials[index[i]].size()==0) return;
+    if (lineserials[index[i]].size()==0) continue;
     info=info+keywords[index[i]]+"("+to_string(lineserials[index[i]].size())+"): line ";
     vector<int>::iterator ite = lineserials[index[i]].begin();
     while (!lineserials[index[i]].empty()){
@@ -198,6 +198,8 @@ int main(int argc , char* argv[])
   }
   // help info
   if(strcmp(argv[1],"--help")==0) {
+    // The only use of system method is here......is that OK?
+    // I just think this way is more elegant.
     system("cat helper");
     return 0;
   }
