@@ -1,8 +1,7 @@
-// version 2.1.
-// Added features:
-// 1.Generate the file index and store it into a set of redis.
-// 2.Use the index generated to search keywords.
-// 3.Optimized the speed of the FileIndexer.
+// version 2.2.
+// Bug repaired:
+// 1.Replaced SPOP instruction with SMEMBERS,so the index could be used for
+//   many times instead of once.
 
 
 
@@ -86,19 +85,13 @@ vector<string> GetInfo() {
   redisReply *reply;
   reply = static_cast<redisReply*>(redisCommand(
     connect,
-    "SCARD %s",setname.c_str())
+    "SMEMBERS %s",setname.c_str())
   );
-  freeReplyObject(reply);
-  int size=reply->integer;
+  int size=reply->elements;
   vector<string> filenames;
-  for(int i=0;i<size;i++) {
-    reply = static_cast<redisReply*>(redisCommand(
-      connect,
-      "SPOP %s",setname.c_str())
-    );
-    filenames.push_back(reply->str);
-    freeReplyObject(reply);
-  }
+  for(int i=0;i<size;i++)
+    filenames.push_back(reply->element[i]->str);
+  freeReplyObject(reply);
   redisFree(connect);
   return filenames;
 }
