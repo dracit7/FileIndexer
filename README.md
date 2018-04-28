@@ -23,6 +23,8 @@ will have to link libmagic.so and libhiredis.so by yourself
 
 ## Usage
 * ./search <rootdirectory> <keyword1> <keyword2> .... <keyword n>
+* ./search --buildindex <rootdirectory>
+* ./search --searchbyindex <keyword1> <keyword2> .... <keyword n>
 * If you want to see more details, use ./search --help to get them.
 
 ## Features

@@ -15,3 +15,12 @@ redis-cli) by command SMEMBERS <setname_you_have_entered> when
 the search is done. You are recommended to delete the SET if you
 don't need it as it may pollute your searchinig environment.
 
+New in v2.1:
+
+  Now you can just store the file index of a directory in a set of
+redis or search by a index in a set rather than by argv.
+
+  ./search --buildindex <FileDirection>
+  ./search --searchbyindex <keyword1>.....<keywordn>
+
+  Be sure that you remember the set name of your index in redis :)

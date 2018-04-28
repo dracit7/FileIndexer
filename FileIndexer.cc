@@ -1,6 +1,8 @@
-// The BETA version.
-// Only support basic requirements
-// Print results on konsole.
+// version 2.1.
+// Added features:
+// 1.Generate the file index and store it into a set of redis.
+// 2.Use the index generated to search keywords.
+// 3.Optimized the speed of the FileIndexer.
 
 
 
@@ -10,6 +12,7 @@
 #include <algorithm>
 #include <vector>
 #include <cstdlib>
+#include <ctime>
 // C++ Header Files.
 // Use iostream,fstream and sstream to find keywords and generate information.
 // Algorithm and vector are used to simplify the coding process.
@@ -56,7 +59,7 @@ private:
 };
 
 // Use redis to store results.
-void StoreInfo(string info) {
+void StoreInfo(const string& info) {
   redisContext *connect = redisConnect("127.0.0.1", 6379);
   if (connect != NULL && connect->err) {
       printf("connection error: %s\n", connect->errstr);
@@ -72,9 +75,37 @@ void StoreInfo(string info) {
   cout<<"Results saved!"<<endl;
 }
 
+// Get index information from redis
+vector<string> GetInfo() {
+  redisContext *connect = redisConnect("127.0.0.1", 6379);
+  if (connect != NULL && connect->err) {
+      printf("connection error: %s\n", connect->errstr);
+      vector<string> nullstr;
+      return nullstr;
+  }
+  redisReply *reply;
+  reply = static_cast<redisReply*>(redisCommand(
+    connect,
+    "SCARD %s",setname.c_str())
+  );
+  freeReplyObject(reply);
+  int size=reply->integer;
+  vector<string> filenames;
+  for(int i=0;i<size;i++) {
+    reply = static_cast<redisReply*>(redisCommand(
+      connect,
+      "SPOP %s",setname.c_str())
+    );
+    filenames.push_back(reply->str);
+    freeReplyObject(reply);
+  }
+  redisFree(connect);
+  return filenames;
+}
 
 
-void Save(string filename,vector<int> *lineserials,string *keywords,int argc) {
+
+void Save(const string& filename,vector<int> *lineserials,string *keywords,int argc) {
   string info=filename+" : ";
   // Use index sort to sort keywords.
   int index[argc-2];
@@ -97,7 +128,7 @@ void Save(string filename,vector<int> *lineserials,string *keywords,int argc) {
 }
 
 // Use magic lib to check the MIME type of a file.
-bool CheckType(string filename) {
+bool CheckType(const string& filename) {
   magic_t checker;
   checker=magic_open(MAGIC_MIME_TYPE);
   magic_load(checker,NULL);
@@ -110,7 +141,7 @@ bool CheckType(string filename) {
 
 // This recursive function returns a vector
 // in which user can get all filenames in a directory.
-vector<string> GetFiles(string root) {
+vector<string> GetFiles(const string& root) {
   vector<string> filenames;
   // Use method c_str to transform root from string to char*.
   // dir is the pointer to the root directory.
@@ -163,7 +194,7 @@ vector<string> GetFiles(string root) {
 
 // This method returns a vector in which users can
 // get all lineserials where the keyword has appeared.
-vector<int> FindKeywords(string content,string keyword) {
+vector<int> FindKeywords(string content,const string& keyword) {
   // Position represents the position of the keyword in a string.
   string::size_type position=0;
   vector<int>lineserial;
@@ -192,6 +223,7 @@ vector<int> FindKeywords(string content,string keyword) {
 
 int main(int argc , char* argv[])
 {
+  int t1,t2,t3;
   if(argc<2) {
     cout<<"Error: invalid input. Use --help to get usage."<<endl;
     return -1;
@@ -203,14 +235,41 @@ int main(int argc , char* argv[])
     system("cat helper");
     return 0;
   }
-  if(argc<=2) {
-    cout<<"Error: invalid input. Use --help to get usage."<<endl;
-    return -1;
+  if(strcmp(argv[1],"--buildindex")==0) {
+    // --buildindex:only save the index of the files
+    if(argc!=3) {
+      cout<<"Error: invalid input. Use --help to get usage."<<endl;
+      return -1;
+    }
+    cout<<"Please enter the SET name of the index to be built in redis:";
+    cin>>setname;
+    vector<string> filenames=GetFiles(argv[2]);
+    int size=filenames.size();
+    for(int i=0;i<size;i++)
+      StoreInfo(filenames[i]);
+    filenames.clear();
+    return 0;
   }
-  cout<<"Please enter the SET name of the output in redis:";
-  cin>>setname;
-  // Get filenames and keywords from input.
-  vector<string> filenames=GetFiles(argv[1]);
+  vector<string> filenames;
+  if(strcmp(argv[1],"--searchbyindex")==0) {
+    // --searchbyindex:search in a stored index
+    cout<<"Please enter the SET name of the index in redis:";
+    cin>>setname;
+    filenames=GetInfo();
+    cout<<"Please enter the SET name of the output in redis:";
+    cin>>setname;
+  }
+  else {
+    // if not get index from redis,get index from argv.
+    if(argc<=2) {
+      cout<<"Error: invalid input. Use --help to get usage."<<endl;
+      return -1;
+    }
+    cout<<"Please enter the SET name of the output in redis:";
+    cin>>setname;
+    // Get filenames and keywords from input.
+    filenames=GetFiles(argv[1]);
+  }
   string keywords[argc-2];
   for(int i=0;i<argc-2;i++)
     keywords[i]=argv[i+2];
