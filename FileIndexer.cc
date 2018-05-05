@@ -1,7 +1,5 @@
-// version 2.2.
-// Bug repaired:
-// 1.Replaced SPOP instruction with SMEMBERS,so the index could be used for
-//   many times instead of once.
+// version 2.5.
+// A (not) fast,incremental version.
 
 
 
@@ -20,8 +18,11 @@
 #include <string.h>
 #include <magic.h>
 #include <hiredis/hiredis.h>
+#include <sys/stat.h>
 // C Header Files.
-// Used to traverse all files in the given directory.
+// <dirent.h> : Used to traverse all files in the given directory.
+// <magic.h> : Used to check the mime type of a given file.
+// <hiredis.h> : Used to control redis by C++ code.
 
 using std::cin;
 using std::cout;
@@ -38,7 +39,11 @@ using std::to_string;
 
 namespace {
 
-string setname="FileIndexer_result";
+string setname;
+string hashname;
+char buffer[1000];
+// setname is used to identify a set in redis.
+// It's default value is "FileIndexer_result".
 
 // This class is used to sort keywords by the number
 // of their occurences in a file.
@@ -60,17 +65,24 @@ private:
 // Use redis to store results.
 void StoreInfo(const string& info) {
   redisContext *connect = redisConnect("127.0.0.1", 6379);
+  // Function redisConnect : connect to the redis server
   if (connect != NULL && connect->err) {
       printf("connection error: %s\n", connect->errstr);
       return;
-  }
+  } // error-handling
   redisReply *reply;
   reply = static_cast<redisReply*>(redisCommand(
     connect,
-    "SADD %s %s",setname.c_str(),info.c_str())
+    "SADD %s %s %s",setname.c_str(),info.c_str())
   );
+  // Function redisCommand : execute a redis command.
+  // Its return value redisReply* is the pointer to a struct
+  // which includes all infomation of this executed command.
+  // (But it's user's job to transform its type to redisReply*)
   freeReplyObject(reply);
+  // Use freeReplyObject to free the RAM used by reply.
   redisFree(connect);
+  // Connection closed.
   cout<<"Results saved!"<<endl;
 }
 
@@ -85,12 +97,15 @@ vector<string> GetInfo() {
   redisReply *reply;
   reply = static_cast<redisReply*>(redisCommand(
     connect,
-    "SMEMBERS %s",setname.c_str())
+    "HKEYS %s",setname.c_str())
   );
   int size=reply->elements;
+  // member elements : the amount of members in this set.
   vector<string> filenames;
   for(int i=0;i<size;i++)
     filenames.push_back(reply->element[i]->str);
+  // member element[] : an array of redisReply objects.
+  // member str : the string returned.
   freeReplyObject(reply);
   redisFree(connect);
   return filenames;
@@ -101,11 +116,13 @@ vector<string> GetInfo() {
 void Save(const string& filename,vector<int> *lineserials,string *keywords,int argc) {
   string info=filename+" : ";
   // Use index sort to sort keywords.
+  // (I'm not sure if index sort is the best choice here, but this doesn't affect much.)
+  // (All for convinience.)
   int index[argc-2];
   for(int i=0;i<argc-2;i++)
     index[i]=i;
   sort(index,index+argc-2,compare(lineserials,argc-2));
-  // Generate the output information.
+  // Generate the output information by ordered format.
   for(int i=0;i<argc-2;i++) {
     if (lineserials[index[i]].size()==0) continue;
     info=info+keywords[index[i]]+"("+to_string(lineserials[index[i]].size())+"): line ";
@@ -121,20 +138,128 @@ void Save(const string& filename,vector<int> *lineserials,string *keywords,int a
 }
 
 // Use magic lib to check the MIME type of a file.
-bool CheckType(const string& filename) {
-  magic_t checker;
-  checker=magic_open(MAGIC_MIME_TYPE);
-  magic_load(checker,NULL);
-  bool flag=!strcmp(magic_file(checker,filename.c_str()),"text/plain");
-  magic_close(checker);
+bool CheckType(const string& filename,const magic_t &checker) {
+  // only plain text would be indexed.
+  return !strcmp(magic_file(checker,filename.c_str()),"text/plain");
+}
+
+bool Modified(redisContext *connect,const string& filename) {
+  bool flag=true;
+  redisReply *reply;
+  reply = static_cast<redisReply*>(redisCommand(
+    connect,
+    "HEXISTS %s %s",hashname.c_str(),filename.c_str())
+  );
+  if(reply->integer) {
+    freeReplyObject(reply);
+    reply = static_cast<redisReply*>(redisCommand(
+      connect,
+      "HGET %s %s",hashname.c_str(),filename.c_str())
+    );
+    FILE *file;
+    int fd;
+    struct stat status;
+    file=fopen(filename.c_str(),"r");
+    fd=fileno(file);
+    fstat(fd,&status);
+    if(to_string(status.st_mtime)==reply->str)
+      flag=false;
+    fclose(file);
+  }
+  freeReplyObject(reply);
   return flag;
 }
 
 
-
 // This recursive function returns a vector
 // in which user can get all filenames in a directory.
+void SaveFiles(redisContext* connect,const string& root) {
+  
+  magic_t checker;
+  checker=magic_open(MAGIC_MIME_TYPE);
+  magic_load(checker,NULL);
+
+  // Use method c_str to transform root from string to char*.
+  // dir is the pointer to the root directory.
+  DIR* dir=opendir(root.c_str());
+  redisReply *reply;
+  if (dir) {
+    dirent *file=NULL;
+    // Read all filenames in current dir using while loop.
+    while((file=readdir(dir))!=NULL){
+      // struct dirent's member d_type shows the type of the file.
+      // if d_type is equal to 8,that means this file is a normal file.
+      // if d_type is equal to 4,then this file is a directory.
+      if(file->d_type==4) {
+        // If this file is a directory:
+        // Ignoring '.' and ".." dir is okay.
+        if(strcmp(file->d_name,".")&&strcmp(file->d_name,"..")){
+          sprintf(buffer,"%s/%s",root.c_str(),file->d_name);
+          // Recursive part.Search all files in this dir
+          // and store the return value in a new vector.
+          string name=buffer;
+          SaveFiles(connect,name);
+        }
+      }
+      else if (file->d_type==8) {
+        sprintf(buffer,"%s/%s",root.c_str(),file->d_name);
+        string name=buffer;
+        if(CheckType(name,checker)&&Modified(connect,name)) {
+          FILE *file;
+          int fd;
+          long long time;
+          struct stat status;
+          file=fopen(name.c_str(),"r");
+          fd=fileno(file);
+          fstat(fd,&status);
+          time=status.st_mtime;
+          fclose(file);
+          reply = static_cast<redisReply*>(redisCommand(
+            connect,
+            "HSET %s %s %ld",hashname.c_str(),name.c_str(),time)
+          );
+          freeReplyObject(reply);
+        }
+      }
+    }
+  }
+  else {
+      cout<<"Error: \""<<root<<"\" is not a accessable directory."<<endl;
+      exit(4);
+  }
+  // Donot forget to closedir.
+  closedir(dir);
+  magic_close(checker);
+}
+
+// This method returns a vector in which users can
+// get all lineserials where the keyword has appeared.
+vector<int> FindKeywords(string content,const string& keyword) {
+  // Position represents the position of the keyword in a string.
+  string::size_type position=0;
+  vector<int>lineserial;
+  // find method of a string searchs for a keyword in this string
+  // starting from <position> and returns the first position of keyword's appearance.
+  // npos represents the search is over.
+  while((position = content.find(keyword,position)) != string::npos){
+    // Use an iterator to get the lineserial of the position.
+    string::iterator ite=content.begin();
+    // count method is in header <algorithm>.
+    // It returns the amount of '\n' between two keyword,
+    // so it can get the lineserial this way.
+    int line=count(ite,ite+position,'\n')+1;
+    lineserial.push_back(line);
+    // Remenber to move the position foward to detect the next keyword.
+    position++;
+  }
+  return lineserial;
+}
+
 vector<string> GetFiles(const string& root) {
+  magic_t checker;
+  checker=magic_open(MAGIC_MIME_TYPE);
+  magic_load(checker,NULL);
+  
   vector<string> filenames;
   // Use method c_str to transform root from string to char*.
   // dir is the pointer to the root directory.
@@ -153,7 +278,7 @@ vector<string> GetFiles(const string& root) {
         name=root+name+string(file->d_name);
         // If this file is a plain text then
         // add this filename to the vector.
-        if(CheckType(name))
+        if(CheckType(name,checker))
           filenames.push_back(name);
       }
       else if(file->d_type==4){
@@ -182,41 +307,16 @@ vector<string> GetFiles(const string& root) {
   }
   // Donot forget to closedir.
   closedir(dir);
+  magic_close(checker);
   return filenames;
 }
-
-// This method returns a vector in which users can
-// get all lineserials where the keyword has appeared.
-vector<int> FindKeywords(string content,const string& keyword) {
-  // Position represents the position of the keyword in a string.
-  string::size_type position=0;
-  vector<int>lineserial;
-  // find method of a string searchs for a keyword in this string
-  // starting from <position> and returns the first position of keyword's appearance.
-  // npos represents the search is over.
-  while((position = content.find(keyword,position)) != string::npos){
-    // Use an iterator to get the lineserial of the position.
-    string::iterator ite=content.begin();
-    // count method is in header <algorithm>.
-    // It returns the amount of '\n' between two keyword,
-    // so it can get the lineserial this way.
-    int line=count(ite,ite+position,'\n')+1;
-    lineserial.push_back(line);
-    // Remenber to move the position foward to detect the next keyword.
-    position++;
-  }
-  return lineserial;
-}
-
-
-
-
 
 }  //namespace
 
 int main(int argc , char* argv[])
 {
-  int t1,t2,t3;
+  setname="FileIndexer_result";
+  hashname="FileIndexer_info";
   if(argc<2) {
     cout<<"Error: invalid input. Use --help to get usage."<<endl;
     return -1;
@@ -234,20 +334,22 @@ int main(int argc , char* argv[])
       cout<<"Error: invalid input. Use --help to get usage."<<endl;
       return -1;
     }
-    cout<<"Please enter the SET name of the index to be built in redis:";
-    cin>>setname;
-    vector<string> filenames=GetFiles(argv[2]);
-    int size=filenames.size();
-    for(int i=0;i<size;i++)
-      StoreInfo(filenames[i]);
-    filenames.clear();
+    cout<<"Please enter the HASH name of the index to be built in redis:";
+    cin>>hashname;
+    redisContext *connect = redisConnect("127.0.0.1", 6379);
+    if (connect != NULL && connect->err) {
+        printf("connection error: %s\n", connect->errstr);
+        return 1;
+    }
+    SaveFiles(connect,argv[2]);
+    redisFree(connect);
     return 0;
   }
   vector<string> filenames;
   if(strcmp(argv[1],"--searchbyindex")==0) {
     // --searchbyindex:search in a stored index
-    cout<<"Please enter the SET name of the index in redis:";
-    cin>>setname;
+    cout<<"Please enter the HASH name of the index in redis:";
+    cin>>hashname;
     filenames=GetInfo();
     cout<<"Please enter the SET name of the output in redis:";
     cin>>setname;
