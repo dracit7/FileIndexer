@@ -70,17 +70,7 @@ void StoreInfo(const string& info) {
       printf("connection error: %s\n", connect->errstr);
       return;
   } // error-handling
-  redisReply *reply;
-  reply = static_cast<redisReply*>(redisCommand(
-    connect,
-    "SADD %s %s %s",setname.c_str(),info.c_str())
-  );
-  // Function redisCommand : execute a redis command.
-  // Its return value redisReply* is the pointer to a struct
-  // which includes all infomation of this executed command.
-  // (But it's user's job to transform its type to redisReply*)
-  freeReplyObject(reply);
-  // Use freeReplyObject to free the RAM used by reply.
+  redisCommand(connect,"SADD %s %s",setname.c_str(),info.c_str());
   redisFree(connect);
   // Connection closed.
   cout<<"Results saved!"<<endl;
@@ -97,8 +87,12 @@ vector<string> GetInfo() {
   redisReply *reply;
   reply = static_cast<redisReply*>(redisCommand(
     connect,
-    "HKEYS %s",setname.c_str())
+    "HKEYS %s",hashname.c_str())
   );
+  // Function redisCommand : execute a redis command.
+  // Its return value redisReply* is the pointer to a struct
+  // which includes all infomation of this executed command.
+  // (But it's user's job to transform its type to redisReply*)
   int size=reply->elements;
   // member elements : the amount of members in this set.
   vector<string> filenames;
@@ -107,6 +101,7 @@ vector<string> GetInfo() {
   // member element[] : an array of redisReply objects.
   // member str : the string returned.
   freeReplyObject(reply);
+  // Use freeReplyObject to free the RAM used by reply.
   redisFree(connect);
   return filenames;
 }
@@ -143,6 +138,7 @@ bool CheckType(const string& filename,const magic_t &checker) {
   return !strcmp(magic_file(checker,filename.c_str()),"text/plain");
 }
 
+// This function checks if a file has been modified after last execute. 
 bool Modified(redisContext *connect,const string& filename) {
   bool flag=true;
   redisReply *reply;
@@ -150,6 +146,8 @@ bool Modified(redisContext *connect,const string& filename) {
     connect,
     "HEXISTS %s %s",hashname.c_str(),filename.c_str())
   );
+  // Firstly we have to confirm the existance of such file.
+  // If not, this file must be new
   if(reply->integer) {
     freeReplyObject(reply);
     reply = static_cast<redisReply*>(redisCommand(
@@ -160,8 +158,14 @@ bool Modified(redisContext *connect,const string& filename) {
     int fd;
     struct stat status;
     file=fopen(filename.c_str(),"r");
+    if(!file) {
+        cout<<filename<<" may be deleted from disk. Cannot open."<<endl;
+        return false;
+    }
     fd=fileno(file);
+    // Use fstat to get file's status.
     fstat(fd,&status);
+    // Check st_mtime to confirm the latest modifie's time.
     if(to_string(status.st_mtime)==reply->str)
       flag=false;
     fclose(file);
@@ -205,6 +209,7 @@ void SaveFiles(redisContext* connect,const string& root) {
         sprintf(buffer,"%s/%s",root.c_str(),file->d_name);
         string name=buffer;
         if(CheckType(name,checker)&&Modified(connect,name)) {
+        // To implement the incremental index, store the file's latest modifie's time.
           FILE *file;
           int fd;
           long long time;
@@ -336,12 +341,15 @@ int main(int argc , char* argv[])
     }
     cout<<"Please enter the HASH name of the index to be built in redis:";
     cin>>hashname;
+    cout<<"Please wait patiently if you're indexing a big folder;"<<endl;
+    cout<<"This may take up to a minute..."<<endl;
     redisContext *connect = redisConnect("127.0.0.1", 6379);
     if (connect != NULL && connect->err) {
         printf("connection error: %s\n", connect->errstr);
         return 1;
     }
     SaveFiles(connect,argv[2]);
+    cout<<"All files have been indexed successfully."<<endl;
     redisFree(connect);
     return 0;
   }
